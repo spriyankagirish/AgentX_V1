@@ -1,10 +1,10 @@
-# AgentX_V1 — Phase 2: Tool Calling
+# AgentX_V1 — Phase 3: Basic AI Agent Loop
 
 AgentX_V1 is a beginner-friendly command-line AI assistant built with plain
 Python and the Groq API. Phase 1 introduced chat completions and temporary
-conversation history. Phase 2 adds one explicitly implemented calculator tool:
-the model may request arithmetic, Python safely calculates it, and the model
-uses the returned result to explain the answer.
+conversation history. Phase 2 added manual calculator tool calling. Phase 3
+adds a visible Python agent loop and a second local-time tool. No agent framework
+is used.
 
 ## What is an LLM application?
 
@@ -161,7 +161,7 @@ Arguments: {"expression": "18500 * 0.25"}
 Python executes the safe calculator and reports:
 
 ```text
-Tool result: 4625.0
+Tool result: 4625
 ```
 
 The result is sent back to Groq as a tool message. Groq can then answer, for
@@ -174,6 +174,101 @@ Assistant: 25% of 18,500 is 4,625.
 Exact tool arguments and assistant wording can vary by model response. The
 calculator returns whole-number results such as `4625` as integers and
 non-whole results as decimals.
+
+## Phase 3: basic AI agent loop
+
+### What is an AI agent?
+
+For this learning project, an AI agent is an application that asks an LLM what
+step to take, executes a tool requested by the LLM, returns the result, and lets
+the LLM decide what to do next. A basic chatbot often makes one LLM request and
+shows one response. This agent can make multiple LLM/tool exchanges during a
+single user turn before giving the final answer. The model requests tools; the
+Python application executes them.
+
+### Architecture
+
+```text
+User
+  ↓
+LLM (conversation history + tool definitions)
+  ↓
+Tool call?
+├── NO → Final Answer
+│
+└── YES
+            ↓
+      Python Tool
+            ↓
+      Tool Result
+            ↓
+      LLM
+            ↓
+      Tool call?
+            ↓
+      repeat until there are no tool calls
+```
+
+### What happens during an iteration?
+
+1. `run_agent()` sends the complete conversation history and both tool
+      definitions to Groq using Chat Completions and `tool_choice="auto"`.
+2. The model may return a normal assistant response, or an assistant message
+      with one or more `tool_calls`.
+3. For tool calls, the application stores the assistant tool-call message,
+      parses each call's JSON arguments, and looks up its name in the explicit
+      `TOOLS` registry in `tools.py`.
+4. Python calls that registered function and adds a `role="tool"` message with
+      the result and the matching `tool_call_id` to conversation history.
+5. The `while` loop sends the updated history to Groq again. The model receives
+      the result and chooses whether it needs another tool or can answer now.
+6. If a response has no tool calls, the application displays and saves its
+      content as the final answer. That no-tool response is the stop condition.
+
+One response may request both calculator and clock calls. AgentX executes every
+call in the batch before asking Groq again. It can also process additional tool
+calls in later iterations. The loop is intentionally explicit and has no
+framework or hidden orchestration.
+
+### The two local tools
+
+- `calculate(expression)` uses the safe AST arithmetic allowlist from Phase 2.
+  It does not use unrestricted `eval()` and rejects arbitrary Python, imports,
+  file access, shell commands, invalid math, and excessively large expressions.
+- `get_current_time()` returns the local system date/time and UTC offset.
+
+The tool definitions describe these functions to the model, but do not execute
+them. `execute_tool_call()` uses only the Python functions in the explicit
+registry; the model cannot request a dynamic import or arbitrary code execution.
+Tool results are sent back because the model cannot see Python's return values
+unless the application includes them in the next LLM request.
+
+### Phase 2 vs Phase 3
+
+**Phase 2:** one LLM request → tool call(s) → Python execution → tool result(s)
+→ one follow-up LLM response. The response after tools was not checked for
+another tool request.
+
+**Phase 3:** the same exchange is inside a `while` loop. Groq can request tools
+over multiple iterations, and the application continues until Groq returns a
+response without tool calls.
+
+### Test prompts
+
+Run the app and try these one at a time. Exact wording and tool grouping can
+vary by model.
+
+1. `What is 25% of 18,500?` — expect `calculate` and result `4625`.
+2. `What time is it?` — expect `get_current_time` and an answer using its result.
+3. `Calculate 12345 * 678.` — expect `calculate` and result `8369910`.
+4. `What is 15% of 800 plus 200?` — expect `calculate`; `(15% of 800) + 200`
+      is `320`.
+5. `What is the capital of France?` — expect a direct answer without a tool.
+6. `Use the calculator to find 25% of 18,500, and also tell me the current
+      local time.` — may use both tools in one batch or successive iterations.
+
+If arithmetic is answered directly, try explicitly asking the model to use the
+calculator and verify that the configured model supports tool calling.
 
 ### Manual test prompts
 
@@ -206,10 +301,11 @@ and set its ID as `GROQ_MODEL` in `.env`.
 
 ## Installation
 
-Open a terminal in the project folder and create a virtual environment:
+From the project root, reuse the existing `.venv` if you already created one.
+Only create it if it is missing:
 
 ```powershell
-py -m venv .venv
+if (!(Test-Path ".venv")) { py -m venv .venv }
 ```
 
 Activate it in PowerShell:
@@ -278,8 +374,8 @@ turn because both turns are sent as conversation history.
 
 ```text
 AgentX_V1/
-├── main.py           # Command-line application and conversation loop
-├── tools.py          # Safe calculator implementation
+├── main.py           # CLI, Groq tool schemas, dispatcher, and agent loop
+├── tools.py          # Safe calculator, local clock, and explicit tool registry
 ├── requirements.txt  # Python package dependencies
 ├── .env              # Local settings and API key; do not commit
 ├── .env.example      # Safe example settings
@@ -306,5 +402,17 @@ AgentX_V1/
 - The result must be sent back to the LLM so it can produce a grounded final
       response.
 - This explicit LLM → tool call → Python execution → tool result → LLM pattern
-      is a foundation for agents, even though this phase does not have an
-      autonomous loop or an agent framework.
+      is the building block used by Phase 3's agent loop.
+
+## What I learned in Phase 3
+
+- An agent uses an LLM decision to select an action, while Python runs the
+      selected registered function.
+- The `while` loop allows the model to request another tool after seeing an
+      earlier tool result.
+- Conversation history connects user requests, assistant tool-call messages,
+      tool results, and final answers across iterations.
+- The application stops when the assistant response has no tool calls.
+- Frameworks such as LangGraph can later help structure larger workflows,
+      branching, retries, persistence, and observability; this phase keeps the loop
+      visible in ordinary Python.

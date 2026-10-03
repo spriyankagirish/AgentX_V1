@@ -3,6 +3,7 @@
 import ast
 import math
 import operator
+from datetime import datetime
 
 
 # This allowlist limits the calculator to basic arithmetic only.
@@ -82,6 +83,18 @@ def calculate(expression: str) -> int | float:
     if isinstance(result, float) and result.is_integer():
         return int(result)
     return result
+
+
+def get_current_time() -> str:
+    """Return the current local system time with its timezone offset."""
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z (UTC%z)")
+
+
+# Only functions in this explicit registry can be selected for execution.
+TOOLS = {
+    "calculate": calculate,
+    "get_current_time": get_current_time,
+}
 
 
 def _check_number(value: int | float) -> None:
