@@ -1,0 +1,15 @@
+# Local API credentials and settings
+.env
+.env.*
+!.env.example
+
+# Python virtual environment and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Editor and operating-system files
+.vscode/
+.DS_Store
+Thumbs.db
